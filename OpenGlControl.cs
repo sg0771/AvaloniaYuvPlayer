@@ -26,6 +26,10 @@ public class AvaloniaBindingsContext : IBindingsContext
 
 public class OpenGlControl : OpenGlControlBase
 {
+    int m_ySize = 0;
+    int m_uvSize = 0;
+    private byte[] m_pY, m_pU, m_pV;
+    private readonly object _lock = new();
 
     int _program, _texY, _texU, _texV;
     int _vao, _vbo;
@@ -53,7 +57,6 @@ public class OpenGlControl : OpenGlControlBase
         string fs = """
         #version 100
         precision mediump float;
-
         varying vec2 vUV;
         uniform sampler2D texY;
         uniform sampler2D texU;
@@ -64,11 +67,10 @@ public class OpenGlControl : OpenGlControlBase
             float y = texture2D(texY, vUV).r;
             float u = texture2D(texU, vUV).r - 0.5;
             float v = texture2D(texV, vUV).r - 0.5;
-
+        
             float r = y + 1.402 * v;
             float g = y - 0.344 * u - 0.714 * v;
             float b = y + 1.772 * u;
-
             gl_FragColor = vec4(r, g, b, 1.0);
         }
         """;
@@ -181,10 +183,19 @@ public class OpenGlControl : OpenGlControlBase
         InitializeTexture(_texV, _w / 2, _h / 2);
 
         // 设置统一变量
+        // 在 OnOpenGlInit 的末尾
         GL.UseProgram(_program);
-        GL.Uniform1(GL.GetUniformLocation(_program, "texY"), 0);
-        GL.Uniform1(GL.GetUniformLocation(_program, "texU"), 1);
-        GL.Uniform1(GL.GetUniformLocation(_program, "texV"), 2);
+
+        int locY = GL.GetUniformLocation(_program, "texY");
+        int locU = GL.GetUniformLocation(_program, "texU");
+        int locV = GL.GetUniformLocation(_program, "texV");
+
+        Console.WriteLine($"Uniform locations: Y={locY}, U={locU}, V={locV}");
+
+        GL.Uniform1(locY, 0); // 对应 TextureUnit.Texture0
+        GL.Uniform1(locU, 1); // 对应 TextureUnit.Texture1
+        GL.Uniform1(locV, 2); // 对应 TextureUnit.Texture2
+
         GL.UseProgram(0);
 
         GL.ClearColor(0, 0, 0, 1); // 改为黑色背景，更容易看到问题
@@ -193,19 +204,16 @@ public class OpenGlControl : OpenGlControlBase
     void InitializeTexture(int tex, int w, int h)
     {
         GL.BindTexture(TextureTarget.Texture2D, tex);
-        // 上传空纹理数据（初始化为黑色）
-        GL.TexImage2D(TextureTarget.Texture2D, 0,
-            PixelInternalFormat.R8, w, h, 0,
-            PixelFormat.Red, PixelType.UnsignedByte, IntPtr.Zero);
 
-        // 关键修复：添加Mipmap配置（必须，否则部分GPU不工作）
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+        // 统一使用 Luminance 格式
+        GL.TexImage2D(TextureTarget.Texture2D, 0,
+            PixelInternalFormat.Luminance, w, h, 0,
+            PixelFormat.Luminance, PixelType.UnsignedByte, IntPtr.Zero);
+
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
         GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
         GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
         GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-
-        // 生成Mipmap（纹理完整初始化的必要步骤）
-        GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
 
         GL.BindTexture(TextureTarget.Texture2D, 0);
     }
@@ -216,6 +224,13 @@ public class OpenGlControl : OpenGlControlBase
 
         _w = w; _h = h;
         _fs = File.OpenRead(file);
+
+        m_ySize = _w * _h;
+        m_uvSize = m_ySize / 4;
+        m_pY = new byte[m_ySize];
+        m_pU = new byte[m_uvSize];
+        m_pV = new byte[m_uvSize];
+
 
         _timer = new DispatcherTimer();
         _timer.Interval = TimeSpan.FromMilliseconds(1000.0 / fps);
@@ -235,39 +250,45 @@ public class OpenGlControl : OpenGlControlBase
     {
         if (_fs == null) return;
 
-        int ySize = _w * _h;
-        int uvSize = ySize / 4;
-
-        byte[] y = new byte[ySize];
-        byte[] u = new byte[uvSize];
-        byte[] v = new byte[uvSize];
-
-        if (_fs.Read(y) < ySize)
+        // ... 在 ReadFrame 结尾替换 Upload 调用
+        lock (_lock)
         {
-            Stop();
-            return;
+            int readY = _fs.Read(m_pY, 0, m_pY.Length);
+
+            if (readY < m_pY.Length)
+            {
+                return;
+            }
+
+            int readU = _fs.Read(m_pU, 0, m_pU.Length);
+            int readV = _fs.Read(m_pV, 0, m_pV.Length);
         }
-        _fs.Read(u);
-        _fs.Read(v);
-
-        Upload(_texY, _w, _h, y);
-        Upload(_texU, _w / 2, _h / 2, u);
-        Upload(_texV, _w / 2, _h / 2, v);
-
-        // 在 ReadFrame() 最后添加
-        Dispatcher.UIThread.Post(RequestNextFrameRendering);
-        Console.WriteLine("Read frame at position: " + _fs.Position);
+        RequestNextFrameRendering();
     }
 
     void Upload(int tex, int w, int h, byte[] data)
     {
-        if (data == null || data.Length == 0)
-            return;
+        if (data == null || data.Length == 0) return;
+
         GL.BindTexture(TextureTarget.Texture2D, tex);
-        GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1); // 必须（YUV数据无4字节对齐）
-        GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, w, h,
-            PixelFormat.Red, PixelType.UnsignedByte, data);
-        GL.GenerateMipmap(GenerateMipmapTarget.Texture2D); // 修复：上传数据后更新Mipmap
+        GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+
+        // ✅ 必须锁定内存并传递指针，确保数据传到显卡
+        unsafe
+        {
+            fixed (byte* p = data)
+            {
+                GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, w, h,
+                    PixelFormat.Luminance, PixelType.UnsignedByte, (IntPtr)p);
+
+                ErrorCode error = GL.GetError();
+                if (error != ErrorCode.NoError)
+                {
+                    Console.WriteLine($"OpenGL Error at TexSubImage2D: {error}");
+                }
+
+            }
+        }
         GL.BindTexture(TextureTarget.Texture2D, 0);
     }
 
@@ -275,10 +296,25 @@ public class OpenGlControl : OpenGlControlBase
     {
         if (_program == 0) return;
 
+        lock (_lock)
+        {
+            //上传最新的YUV数据到纹理
+            Upload(_texY, _w, _h, m_pY);
+            Upload(_texU, _w / 2, _h / 2, m_pU);
+            Upload(_texV, _w / 2, _h / 2, m_pV);
+        }
+
         GL.Viewport(0, 0, (int)Bounds.Width, (int)Bounds.Height);
         GL.Clear(ClearBufferMask.ColorBufferBit);
 
         GL.UseProgram(_program);
+
+        // ✅ 强制重新关联槽位，防止某些驱动下索引丢失
+        GL.Uniform1(GL.GetUniformLocation(_program, "texY"), 0);
+        GL.Uniform1(GL.GetUniformLocation(_program, "texU"), 1);
+        GL.Uniform1(GL.GetUniformLocation(_program, "texV"), 2);
+
+
         GL.BindVertexArray(_vao);
 
         // 绑定纹理到正确的纹理单元
@@ -292,6 +328,12 @@ public class OpenGlControl : OpenGlControlBase
         GL.BindTexture(TextureTarget.Texture2D, _texV);
 
         GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
+
+        ErrorCode error = GL.GetError();
+        if (error != ErrorCode.NoError)
+        {
+            Console.WriteLine($"OpenGL Error at DrawArrays: {error}");
+        }
 
         // 清理状态
         GL.BindVertexArray(0);
