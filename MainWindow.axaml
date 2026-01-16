@@ -1,0 +1,28 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:AvaloniaYuvPlayer"
+        x:Class="AvaloniaYuvPlayer.MainWindow"
+        Width="900" Height="600"
+        Title="YUV420P Player">
+
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="10">
+
+            <Button Content="选择YUV文件" Click="OnOpenFile"/>
+
+            <TextBlock Text="宽"/>
+            <TextBox Name="WidthBox" Width="60" Text="352"/>
+
+            <TextBlock Text="高"/>
+            <TextBox Name="HeightBox" Width="60" Text="288"/>
+
+            <TextBlock Text="FPS"/>
+            <TextBox Name="FpsBox" Width="60" Text="25"/>
+
+            <Button Content="播放" Click="OnPlay"/>
+            <Button Content="停止" Click="OnStop"/>
+        </StackPanel>
+
+        <local:OpenGlControl Name="GlView"/>
+    </DockPanel>
+</Window>
