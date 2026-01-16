@@ -23,6 +23,8 @@
             <Button Content="停止" Click="OnStop"/>
         </StackPanel>
 
-        <local:OpenGlControl Name="GlView"/>
+		<Border  Width="900" Height="576">
+         <local:OpenGlControl  Name="GlView"  Width="900" Height="576" />
+		</Border>
     </DockPanel>
 </Window>

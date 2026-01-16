@@ -1,9 +1,21 @@
+/*
+ 
+    <PackageReference Include="Avalonia" Version="11.0.7" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.0.7" />
+	  <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.7" />
+	  <PackageReference Include="Avalonia.Themes.Fluent" Version="11.0.7" />
+    <PackageReference Include="OpenTK" Version="4.8.0" />
+
+ */
+
 using Avalonia.Controls;
 using Avalonia.OpenGL;
 using Avalonia.OpenGL.Controls;
 using Avalonia.Threading;
 using OpenTK;
+using OpenTK.Compute.OpenCL;
 using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 using System;
 using System.IO;
 
@@ -31,13 +43,13 @@ public class OpenGlControl : OpenGlControlBase
     private byte[] m_pY, m_pU, m_pV;
     private readonly object _lock = new();
 
-    int _program, _texY, _texU, _texV;
-    int _vao, _vbo;
-    int _w = 352, _h = 288;
+    int m_program, m_texY, m_texU, m_texV;
+    int m_vao, m_vbo;
+    int m_w = 352, m_h = 288;
     FileStream? _fs;
     DispatcherTimer? _timer;
 
-    int _posLoc, _uvLoc;
+    int m_posLoc, m_uvLoc;
 
     public int WXCreateProgram()
     {
@@ -107,10 +119,10 @@ public class OpenGlControl : OpenGlControlBase
         }
 
         // 获取属性位置，但不在这里设置顶点属性指针
-        _posLoc = GL.GetAttribLocation(p, "aPos");
-        _uvLoc = GL.GetAttribLocation(p, "aUV");
+        m_posLoc = GL.GetAttribLocation(p, "aPos");
+        m_uvLoc = GL.GetAttribLocation(p, "aUV");
 
-        Console.WriteLine($"Attribute locations: aPos={_posLoc}, aUV={_uvLoc}");
+        Console.WriteLine($"Attribute locations: aPos={m_posLoc}, aUV={m_uvLoc}");
 
         return p;
     }
@@ -128,16 +140,16 @@ public class OpenGlControl : OpenGlControlBase
             OpenTK.Graphics.OpenGL4.StringName.ShadingLanguageVersion);
         Console.WriteLine("GLSL = " + strGLSL);
 
-        _program = WXCreateProgram();
+        m_program = WXCreateProgram();
 
-        if (_program == 0)
+        if (m_program == 0)
         {
             Console.WriteLine("Failed to create shader program!");
             return;
         }
 
         // 创建顶点数据
-        float[] vertices =
+        float[] m_vertices =
         {
             // pos      // uv
             -1f, -1f,   0f, 1f,
@@ -150,45 +162,45 @@ public class OpenGlControl : OpenGlControlBase
         };
 
         // 创建并绑定VAO
-        _vao = GL.GenVertexArray();
-        GL.BindVertexArray(_vao);
+        m_vao = GL.GenVertexArray();
+        GL.BindVertexArray(m_vao);
 
         // 创建并绑定VBO
-        _vbo = GL.GenBuffer();
-        GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo);
+        m_vbo = GL.GenBuffer();
+        GL.BindBuffer(BufferTarget.ArrayBuffer, m_vbo);
         GL.BufferData(BufferTarget.ArrayBuffer,
-            vertices.Length * sizeof(float),
-            vertices,
+            m_vertices.Length * sizeof(float),
+            m_vertices,
             BufferUsageHint.StaticDraw);
 
         // 设置顶点属性 - 必须在VAO绑定状态下进行
-        GL.EnableVertexAttribArray(_posLoc);
-        GL.VertexAttribPointer(_posLoc, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 0);
+        GL.EnableVertexAttribArray(m_posLoc);
+        GL.VertexAttribPointer(m_posLoc, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 0);
 
-        GL.EnableVertexAttribArray(_uvLoc);
-        GL.VertexAttribPointer(_uvLoc, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
+        GL.EnableVertexAttribArray(m_uvLoc);
+        GL.VertexAttribPointer(m_uvLoc, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
 
         // 解绑VAO和VBO
         GL.BindVertexArray(0);
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
 
         // 创建纹理
-        _texY = GL.GenTexture();
-        _texU = GL.GenTexture();
-        _texV = GL.GenTexture();
+        m_texY = GL.GenTexture();
+        m_texU = GL.GenTexture();
+        m_texV = GL.GenTexture();
 
         // 初始化纹理
-        InitializeTexture(_texY, _w, _h);
-        InitializeTexture(_texU, _w / 2, _h / 2);
-        InitializeTexture(_texV, _w / 2, _h / 2);
+        InitializeTexture(m_texY, m_w, m_h);
+        InitializeTexture(m_texU, m_w / 2, m_h / 2);
+        InitializeTexture(m_texV, m_w / 2, m_h / 2);
 
         // 设置统一变量
         // 在 OnOpenGlInit 的末尾
-        GL.UseProgram(_program);
+        GL.UseProgram(m_program);
 
-        int locY = GL.GetUniformLocation(_program, "texY");
-        int locU = GL.GetUniformLocation(_program, "texU");
-        int locV = GL.GetUniformLocation(_program, "texV");
+        int locY = GL.GetUniformLocation(m_program, "texY");
+        int locU = GL.GetUniformLocation(m_program, "texU");
+        int locV = GL.GetUniformLocation(m_program, "texV");
 
         Console.WriteLine($"Uniform locations: Y={locY}, U={locU}, V={locV}");
 
@@ -222,10 +234,10 @@ public class OpenGlControl : OpenGlControlBase
     {
         Stop();
 
-        _w = w; _h = h;
+        m_w = w; m_h = h;
         _fs = File.OpenRead(file);
 
-        m_ySize = _w * _h;
+        m_ySize = m_w * m_h;
         m_uvSize = m_ySize / 4;
         m_pY = new byte[m_ySize];
         m_pU = new byte[m_uvSize];
@@ -294,38 +306,74 @@ public class OpenGlControl : OpenGlControlBase
 
     protected override void OnOpenGlRender(GlInterface gl, int fb)
     {
-        if (_program == 0) return;
+        if (m_program == 0) return;
 
         lock (_lock)
         {
             //上传最新的YUV数据到纹理
-            Upload(_texY, _w, _h, m_pY);
-            Upload(_texU, _w / 2, _h / 2, m_pU);
-            Upload(_texV, _w / 2, _h / 2, m_pV);
+            Upload(m_texY, m_w, m_h, m_pY);
+            Upload(m_texU, m_w / 2, m_h / 2, m_pU);
+            Upload(m_texV, m_w / 2, m_h / 2, m_pV);
         }
 
-        GL.Viewport(0, 0, (int)Bounds.Width, (int)Bounds.Height);
+
+        // 1. ✅ 关键修正：将逻辑像素转换为物理像素
+        // 假设系统缩放为 1.5，Bounds.Width 为 100，实际物理像素是 150
+        double scaling = VisualRoot?.RenderScaling ?? 1.0;
+        int canvasW = (int)(Bounds.Width * scaling);
+        int canvasH = (int)(Bounds.Height * scaling);
+
+        // 2. 计算比例
+        float videoAspect = (float)m_w / m_h;    // 视频宽高比 (如 352/288)
+        float canvasAspect = (float)canvasW / canvasH; // 控件宽高比
+
+        float renderW, renderH;
+        if (videoAspect > canvasAspect)
+        {
+            // 视频更宽：宽度填满，高度按比例缩放 (上下留黑边)
+            renderW = canvasW;
+            renderH = canvasW / videoAspect;
+        }
+        else
+        {
+            // 视频更窄：高度填满，宽度按比例缩放 (左右留黑边)
+            renderH = canvasH;
+            renderW = canvasH * videoAspect;
+        }
+
+        // 3. ✅ 精确计算居中偏移量 (关键点：x 和 y 必须是相对于左下角)
+        int offsetX = (int)((canvasW - renderW) / 2);
+        int offsetY = (int)((canvasH - renderH) / 2);
+
+        // 4. 首先清除全屏为黑色 (确保黑边区域干净)
+        GL.Viewport(0, 0, canvasW, canvasH);
         GL.Clear(ClearBufferMask.ColorBufferBit);
 
-        GL.UseProgram(_program);
+        // 5. ✅ 设置居中的视口区域进行视频绘制
+        GL.Viewport(offsetX, offsetY, (int)renderW, (int)renderH);
+
+        // --- 后续绘图逻辑保持不变 ---
+
+        GL.UseProgram(m_program);
+
 
         // ✅ 强制重新关联槽位，防止某些驱动下索引丢失
-        GL.Uniform1(GL.GetUniformLocation(_program, "texY"), 0);
-        GL.Uniform1(GL.GetUniformLocation(_program, "texU"), 1);
-        GL.Uniform1(GL.GetUniformLocation(_program, "texV"), 2);
+        GL.Uniform1(GL.GetUniformLocation(m_program, "texY"), 0);
+        GL.Uniform1(GL.GetUniformLocation(m_program, "texU"), 1);
+        GL.Uniform1(GL.GetUniformLocation(m_program, "texV"), 2);
 
 
-        GL.BindVertexArray(_vao);
+        GL.BindVertexArray(m_vao);
 
         // 绑定纹理到正确的纹理单元
         GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindTexture(TextureTarget.Texture2D, _texY);
+        GL.BindTexture(TextureTarget.Texture2D, m_texY);
 
         GL.ActiveTexture(TextureUnit.Texture1);
-        GL.BindTexture(TextureTarget.Texture2D, _texU);
+        GL.BindTexture(TextureTarget.Texture2D, m_texU);
 
         GL.ActiveTexture(TextureUnit.Texture2);
-        GL.BindTexture(TextureTarget.Texture2D, _texV);
+        GL.BindTexture(TextureTarget.Texture2D, m_texV);
 
         GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
 
@@ -348,26 +396,26 @@ public class OpenGlControl : OpenGlControlBase
     {
         Stop();
 
-        if (_program != 0)
+        if (m_program != 0)
         {
-            GL.DeleteProgram(_program);
-            _program = 0;
+            GL.DeleteProgram(m_program);
+            m_program = 0;
         }
 
-        if (_vao != 0)
+        if (m_vao != 0)
         {
-            GL.DeleteVertexArray(_vao);
-            _vao = 0;
+            GL.DeleteVertexArray(m_vao);
+            m_vao = 0;
         }
 
-        if (_vbo != 0)
+        if (m_vbo != 0)
         {
-            GL.DeleteBuffer(_vbo);
-            _vbo = 0;
+            GL.DeleteBuffer(m_vbo);
+            m_vbo = 0;
         }
 
-        if (_texY != 0) GL.DeleteTexture(_texY);
-        if (_texU != 0) GL.DeleteTexture(_texU);
-        if (_texV != 0) GL.DeleteTexture(_texV);
+        if (m_texY != 0) GL.DeleteTexture(m_texY);
+        if (m_texU != 0) GL.DeleteTexture(m_texU);
+        if (m_texV != 0) GL.DeleteTexture(m_texV);
     }
 }
